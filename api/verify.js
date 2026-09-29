@@ -1,32 +1,63 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient('https://lzhtssljvxgojephvlrf.supabase.co', 'sb_publishable_CZNuUbLd4DLptpwVaZERHg_F9jM5-Hb');
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 export default async function handler(req, res) {
-    if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    const { key, hwid } = req.body;
-    if (!key || !hwid) return res.status(400).json({ success: false, message: "Missing data" });
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
-    // Check if key exists in Supabase
-    const { data, error } = await supabase.from('keys').select('*').eq('key_string', key).single();
+  // Handle GET request for key generation
+  if (req.method === 'GET' && req.query.action === 'generate') {
+    const randomKey = 'GEEG-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    
+    const { error } = await supabase
+      .from('keys')
+      .insert([{ key_string: randomKey, hwid: null, used: false }]);
+
+    if (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+
+    return res.status(200).json({ success: true, key: randomKey });
+  }
+
+  // Handle POST request for key verification
+  if (req.method === 'POST') {
+    const { key, hwid } = req.body || {};
+
+    if (!key) {
+      return res.status(400).json({ success: false, message: 'Missing key.' });
+    }
+
+    const { data, error } = await supabase
+      .from('keys')
+      .select('*')
+      .eq('key_string', key)
+      .single();
 
     if (error || !data) {
-        return res.json({ success: false, message: "Invalid key." });
+      return res.status(404).json({ success: false, message: 'Invalid key.' });
     }
 
-    // Check HWID locking
-    if (data.hwid && data.hwid !== hwid) {
-        return res.json({ success: false, message: "Key is locked to another device!" });
+    if (data.used && data.hwid !== hwid) {
+      return res.status(403).json({ success: false, message: 'Key already bound to another device.' });
     }
 
-    // Lock HWID if first time use
-    if (!data.hwid) {
-        await supabase.from('keys').update({ hwid: hwid, used: true }).eq('key_string', key);
-    }
+    await supabase
+      .from('keys')
+      .update({ hwid: hwid, used: true })
+      .eq('key_string', key);
 
-    // Return your heavy core script text here after successful verification!
-    const protectedCoreScript = `print('geeg.xyz loaded successfully!')`; // Replace with your full obfuscated script later
+    return res.status(200).json({ success: true, message: 'Key verified successfully!' });
+  }
 
-    return res.json({ success: true, script: protectedCoreScript });
+  return res.status(405).json({ success: false, message: 'Method not allowed.' });
 }
